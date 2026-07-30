@@ -5,13 +5,15 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use monster_server::{handlers::create_router, state::AppState};
+use monster_server::handlers::create_router;
 use serde_json::Value;
 use tower::ServiceExt;
 
+mod common;
+
 #[tokio::test]
 async fn test_api_devices_flow() {
-    let state = AppState::new(15);
+    let (state, _db_dir) = common::test_state();
     let app = create_router(state, "design");
 
     // 1. Initially GET /api/v1/devices returns empty array

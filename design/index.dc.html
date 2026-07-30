@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="./support.js"></script>
+<script src="./chart.umd.js"></script>
 </head>
 <body>
 <x-dc>
@@ -13,8 +14,11 @@
     ::selection { background: oklch(55% 0.14 195 / 0.25); }
     input::placeholder { color: oklch(60% 0.008 250); }
   </style>
+  <!-- Loaded non-blocking: Monster is meant to run on LANs with no internet
+       access, where a render-blocking font request stalls the whole page until
+       it times out. Every rule below falls back to a system font. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 </helmet>
 
 <div style="min-height:100vh; display:flex; flex-direction:column; font-family:'Space Grotesk',system-ui,sans-serif; color:oklch(20% 0.01 250); background:oklch(97% 0.004 250);">
@@ -216,8 +220,27 @@
         </sc-if>
 
         <div style="display:flex; gap:10px;">
-          <div onClick="{{ selectedDevice.onEdit }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">Edit Device</div>
-          <div onClick="{{ selectedDevice.onDelete }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.05 25); color:oklch(45% 0.18 25); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.07 25);">Delete Device</div>
+          <div onClick="{{ openHistoryModal }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">View History</div>
+          <div onClick="{{ selectedDevice.onEdit }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">Edit</div>
+          <div onClick="{{ selectedDevice.onDelete }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.05 25); color:oklch(45% 0.18 25); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.07 25);">Delete</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- History modal -->
+  <sc-if value="{{ historyModalOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; background:oklch(20% 0.01 250 / 0.5); display:flex; align-items:center; justify-content:center; z-index:80;" onClick="{{ closeHistoryModal }}">
+      <div style="width:800px; max-width:95vw; background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:16px; padding:26px;" onClick="{{ stopProp }}">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <div style="font-size:17px; font-weight:700;">History: {{ selectedDevice.name }}</div>
+          <div onClick="{{ closeHistoryModal }}" style="cursor:pointer; font-size:20px; color:oklch(55% 0.008 250);">&times;</div>
+        </div>
+        <sc-if value="{{ isLoadingHistory }}">
+          <div style="text-align:center; padding:40px; color:oklch(55% 0.008 250);">Loading historical data...</div>
+        </sc-if>
+        <div style="position:relative; height:400px; width:100%;">
+          <canvas id="historyChart"></canvas>
         </div>
       </div>
     </div>
@@ -297,21 +320,13 @@ const COLORS = {
   offline: 'oklch(55% 0.01 250)',
 };
 
-const LOG_POOL = ['Health check passed', 'Metrics agent reconnected', 'Configuration reloaded', 'Scheduled backup completed', 'Security patch applied', 'Disk cleanup completed', 'Service restarted', 'Certificate renewed'];
-
 function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
-function walk(v, min, max, step) { return clamp(v + (Math.random() - 0.5) * step, min, max); }
-function rand(min, max) { return min + Math.random() * (max - min); }
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-
-function seedHistory(base, variance, min, max, len) {
-  const arr = []; let v = base;
-  for (let i = 0; i < len; i++) { v = walk(v, min, max, variance); arr.push(Math.round(v * 10) / 10); }
-  return arr;
-}
 
 function pointsFor(history, min, max, w, h) {
-  if (!history || history.length === 0) return `0,${h} ${w},${h}`;
+  // Devices without the relevant sensor report null samples; drop them so the
+  // sparkline shows nothing rather than a fabricated flat line.
+  history = (history || []).filter((v) => v !== null && v !== undefined);
+  if (history.length === 0) return '';
   if (history.length === 1) {
     const y = (h - ((clamp(history[0], min, max) - min) / (max - min)) * h).toFixed(1);
     return `0,${y} ${w},${y}`;
@@ -346,58 +361,6 @@ function formatAgo(ts) {
   return Math.floor(hrs / 24) + 'd ago';
 }
 
-function seedLogs() {
-  const n = 3 + Math.floor(Math.random() * 2);
-  const logs = [];
-  for (let i = 0; i < n; i++) logs.push({ ts: Date.now() - rand(3600, 5 * 86400) * 1000, message: pick(LOG_POOL) });
-  return logs.sort((a, b) => b.ts - a.ts);
-}
-
-const TYPE_POOL = [
-  { type: 'server', share: 0.34, prefixes: ['web', 'api', 'db', 'cache', 'auth', 'queue', 'mail', 'proxy'] },
-  { type: 'network', share: 0.15, prefixes: ['switch', 'router', 'fw', 'lb', 'ap'] },
-  { type: 'iot', share: 0.2, prefixes: ['sensor', 'cam', 'beacon', 'probe'] },
-  { type: 'workstation', share: 0.16, prefixes: ['ws', 'laptop', 'desk'] },
-  { type: 'vm', share: 0.15, prefixes: ['vm', 'build', 'runner', 'ci'] },
-];
-const REGIONS = ['us-east', 'us-west', 'eu-west', 'ap-south', 'sa-east'];
-const TAG_POOL = ['prod', 'staging', 'core', 'edge', 'backup'];
-
-function generateFleet(count) {
-  const devices = [];
-  let idx = 1;
-  TYPE_POOL.forEach(tp => {
-    const n = Math.round(count * tp.share);
-    for (let i = 0; i < n; i++) {
-      const region = pick(REGIONS);
-      const prefix = pick(tp.prefixes);
-      const name = prefix + '-' + region + '-' + String(idx).padStart(3, '0');
-      const ip = '10.' + (idx % 20) + '.' + Math.floor(idx / 254) + '.' + ((idx % 254) + 1);
-      const roll = Math.random();
-      const isOffline = roll < 0.04;
-      let level = 'healthy';
-      if (!isOffline) { if (roll < 0.10) level = 'critical'; else if (roll < 0.24) level = 'warning'; }
-      const cpu = isOffline ? 0 : level === 'critical' ? rand(90, 99) : level === 'warning' ? rand(75, 89) : rand(5, 70);
-      const mem = isOffline ? 0 : level === 'critical' ? rand(92, 99) : level === 'warning' ? rand(80, 91) : rand(15, 75);
-      const temp = isOffline ? 0 : level === 'critical' ? rand(82, 92) : level === 'warning' ? rand(70, 81) : rand(32, 65);
-      const tags = [pick(TAG_POOL)].concat(Math.random() < 0.3 ? [pick(TAG_POOL)] : []);
-      devices.push({
-        id: 'd' + idx, name, type: tp.type, ip, tags: [...new Set(tags)],
-        status: isOffline ? 'offline' : 'online',
-        cpu, mem, disk: rand(10, 85), temp,
-        load1: rand(0.1, 3), load5: rand(0.1, 3), load15: rand(0.1, 3),
-        netIn: rand(2, 700), netOut: rand(2, 650),
-        uptime: rand(600, 60 * 86400),
-        lastSeenAt: Date.now(),
-        history: { cpu: seedHistory(cpu, 8, 2, 99, 20), mem: seedHistory(mem, 5, 5, 97, 20), temp: seedHistory(temp, 2, 25, 92, 20) },
-        logs: seedLogs(),
-      });
-      idx++;
-    }
-  });
-  return devices;
-}
-
 class Component extends DCLogic {
   state = {
     devices: [],
@@ -405,6 +368,7 @@ class Component extends DCLogic {
     formMode: null, editingId: null,
     formName: '', formIp: '', formType: 'server', formTags: '', formError: '',
     deleteTarget: null,
+    historyModalOpen: false, isLoadingHistory: false, historyData: [],
   };
 
   componentDidMount() {
@@ -489,7 +453,7 @@ class Component extends DCLogic {
       cpu: d.cpu || 0,
       mem: d.mem || 0,
       disk: d.disk || 0,
-      temp: d.temp || 40,
+      temp: (d.temp === null || d.temp === undefined) ? null : d.temp,
       load1: d.load1 || 0,
       load5: d.load5 || 0,
       load15: d.load15 || 0,
@@ -501,7 +465,7 @@ class Component extends DCLogic {
       history: {
         cpu: (d.history && d.history.cpu && d.history.cpu.length) ? d.history.cpu : [d.cpu || 0],
         mem: (d.history && d.history.mem && d.history.mem.length) ? d.history.mem : [d.mem || 0],
-        temp: (d.history && d.history.temp && d.history.temp.length) ? d.history.temp : [d.temp || 40],
+        temp: (d.history && d.history.temp && d.history.temp.length) ? d.history.temp : [(d.temp === null || d.temp === undefined) ? null : d.temp],
       },
       logs: (d.logs || []).map(l => ({ ts: l.ts > 1e11 ? l.ts : l.ts * 1000, message: l.message })),
     };
@@ -567,6 +531,66 @@ class Component extends DCLogic {
     this.setState(s => ({ devices: s.devices.filter(d => d.id !== target.id), deleteTarget: null, selectedId: s.selectedId === target.id ? null : s.selectedId }));
   }
 
+  openHistoryModal = async () => {
+    if (!this.state.selectedId) return;
+    this.setState({ historyModalOpen: true, isLoadingHistory: true, historyData: [] });
+    try {
+      const res = await fetch(`/api/v1/devices/${this.state.selectedId}/history?days=7`);
+      if (res.ok) {
+        const data = await res.json();
+        this.setState({ historyData: data.history || [], isLoadingHistory: false });
+        setTimeout(() => this.renderChart(), 100);
+      } else {
+        this.setState({ isLoadingHistory: false });
+      }
+    } catch (e) {
+      console.warn("Fetch history error:", e);
+      this.setState({ isLoadingHistory: false });
+    }
+  }
+
+  closeHistoryModal = () => {
+    this.setState({ historyModalOpen: false });
+    if (this.chartInstance) {
+      this.chartInstance.destroy();
+      this.chartInstance = null;
+    }
+  }
+
+  renderChart() {
+    const ctx = document.getElementById('historyChart');
+    if (!ctx) return;
+    if (this.chartInstance) this.chartInstance.destroy();
+    
+    const data = this.state.historyData;
+    if (!data || data.length === 0) return;
+
+    this.chartInstance = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(d => {
+          const dt = new Date(d.timestamp * 1000);
+          return dt.getMonth()+1 + '/' + dt.getDate() + ' ' + dt.getHours() + ':' + String(dt.getMinutes()).padStart(2,'0');
+        }),
+        datasets: [
+          { label: 'CPU %', data: data.map(d => d.cpu), borderColor: COLORS.healthy, tension: 0.1, pointRadius: 0, borderWidth: 2 },
+          { label: 'Memory %', data: data.map(d => d.mem), borderColor: COLORS.warning, tension: 0.1, pointRadius: 0, borderWidth: 2 },
+          { label: 'Temp °C', data: data.map(d => d.temp), borderColor: COLORS.critical, tension: 0.1, pointRadius: 0, borderWidth: 2 }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        interaction: { mode: 'index', intersect: false },
+        scales: {
+          x: { ticks: { maxTicksLimit: 10 } },
+          y: { beginAtZero: true }
+        }
+      }
+    });
+  }
+
   buildDisplay(d) {
     const level = this.statusLevel(d);
     const color = COLORS[level];
@@ -574,11 +598,15 @@ class Component extends DCLogic {
     const cpuColor = d.status === 'offline' ? COLORS.offline : metricColor(d.cpu, 75, 90);
     const memColor = d.status === 'offline' ? COLORS.offline : metricColor(d.mem, 80, 92);
     const diskColor = metricColor(d.disk, 80, 92);
-    const tempColor = d.status === 'offline' ? COLORS.offline : metricColor(d.temp, 70, 82);
+    // A device with no temperature sensor reports null; show a dash rather than
+    // rendering a stand-in reading as if it were measured.
+    const hasTemp = d.temp !== null && d.temp !== undefined;
+    const tempColor = (d.status === 'offline' || !hasTemp) ? COLORS.offline : metricColor(d.temp, 70, 82);
+    const tempDisplay = hasTemp ? Math.round(d.temp) + '°C' : '—';
     return {
       id: d.id, name: d.name, ip: d.ip, typeLabel: TYPE_LABELS[d.type] || d.type,
       statusColor: color, statusLabel, cpuColor, memColor, diskColor, tempColor,
-      cpuDisplay: Math.round(d.cpu) + '%', memDisplay: Math.round(d.mem) + '%', diskDisplay: Math.round(d.disk) + '%', tempDisplay: Math.round(d.temp) + '°C',
+      cpuDisplay: Math.round(d.cpu) + '%', memDisplay: Math.round(d.mem) + '%', diskDisplay: Math.round(d.disk) + '%', tempDisplay,
       load1: d.load1.toFixed(2), load5: d.load5.toFixed(2), load15: d.load15.toFixed(2),
       netIn: (d.netIn < 1 ? d.netIn.toFixed(2) : Math.round(d.netIn)) + ' Mbps',
       netOut: (d.netOut < 1 ? d.netOut.toFixed(2) : Math.round(d.netOut)) + ' Mbps',
@@ -588,12 +616,12 @@ class Component extends DCLogic {
         { label: 'CPU', display: Math.round(d.cpu) + '%', pct: Math.round(d.cpu) + '%', color: cpuColor },
         { label: 'Memory', display: Math.round(d.mem) + '%', pct: Math.round(d.mem) + '%', color: memColor },
         { label: 'Disk', display: Math.round(d.disk) + '%', pct: Math.round(d.disk) + '%', color: diskColor },
-        { label: 'Temperature', display: Math.round(d.temp) + '°C', pct: Math.min(100, Math.max(0, d.temp)) + '%', color: tempColor },
+        { label: 'Temperature', display: tempDisplay, pct: (hasTemp ? Math.min(100, Math.max(0, d.temp)) : 0) + '%', color: tempColor },
       ],
       charts: [
         { label: 'CPU', display: Math.round(d.cpu) + '%', color: cpuColor, points: pointsFor(d.history.cpu, 0, 100, 360, 56) },
         { label: 'Memory', display: Math.round(d.mem) + '%', color: memColor, points: pointsFor(d.history.mem, 0, 100, 360, 56) },
-        { label: 'Temperature', display: Math.round(d.temp) + '°C', color: tempColor, points: pointsFor(d.history.temp, 20, 95, 360, 56) },
+        { label: 'Temperature', display: tempDisplay, color: tempColor, points: pointsFor(d.history.temp, 20, 95, 360, 56) },
       ],
       logs: d.logs.map(l => ({ time: formatAgo(l.ts), message: l.message })),
       hasTags: d.tags.length > 0,
@@ -663,6 +691,8 @@ class Component extends DCLogic {
       closeModal: this.closeModal, submitForm: this.submitForm,
       deleteTarget, deleteTargetName: deleteTarget ? deleteTarget.name : '',
       cancelDelete: this.cancelDelete, confirmDelete: this.confirmDelete,
+      openHistoryModal: this.openHistoryModal, closeHistoryModal: this.closeHistoryModal,
+      historyModalOpen: this.state.historyModalOpen, isLoadingHistory: this.state.isLoadingHistory,
     };
   }
 }

@@ -45,10 +45,45 @@ UDP is used by default because it's fast and keeps packet sizes tiny. If you nee
 cargo run --bin monster-agent -- -p http
 ```
 
+### Configuring the Server
+
+The server is configured entirely through environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HOST` | `0.0.0.0` | Interface to bind (HTTP and UDP). |
+| `PORT` | `3000` | Port for HTTP, WebSocket, and UDP metrics. |
+| `MDNS_PORT` | same as `PORT` | Port to advertise over mDNS, if it differs. |
+| `STATIC_DIR` | `design` | Directory holding the dashboard files. |
+| `HEARTBEAT_TIMEOUT_SECS` | `15` | Silence before a device is marked offline. |
+| `HISTORY_DAYS` | `7` | How long historical samples are kept. |
+| `DB_PATH` | `monster_state.redb` | Location of the embedded database file. |
+
 ## Architecture
 
 - **`monster-agent`**: Uses the `sysinfo` crate to gather system hardware telemetry. It bundles this into a payload and ships it off to the server every few seconds. 
-- **`monster-server`**: An `axum` based web server. It runs a background UDP listener for ingesting high-throughput metrics, serves a REST API for management, and hosts the static frontend files. 
+- **`monster-server`**: An `axum` based web server. It runs a background UDP listener for ingesting high-throughput metrics, serves a REST API for management, and hosts the static frontend files. Device state and history are persisted to an embedded `redb` database, so the dashboard survives a restart.
+
+### Unavailable Readings
+
+Not every machine exposes every sensor — VMs and many single-board computers
+report no temperature at all. Monster reports these as *unknown* (`null` over the
+API, `—` on the dashboard) rather than substituting a plausible-looking number.
+
+### Frontend Dependencies
+
+The dashboard is plain HTML/JS served from `design/` with no build step. It uses
+a vendored copy of [Chart.js](https://www.chartjs.org) v4.5.1 at
+`design/chart.umd.js`, which is committed so the dashboard works on an offline
+LAN. Web fonts are loaded non-blocking from Google Fonts and fall back to system
+fonts when there is no internet access.
+
+## Security
+
+Monster has no authentication and is intended for a trusted home network only.
+The UDP ingest port accepts unauthenticated datagrams, and the REST API allows
+anyone who can reach it to create and delete devices. Do not expose the server
+to the internet.
 
 ## License
 MIT

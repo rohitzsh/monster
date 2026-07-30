@@ -3,10 +3,16 @@
 use crate::model::CreateDeviceRequest;
 use crate::state::AppState;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub days: Option<u32>,
+}
 
 /// Endpoint to list all registered devices (`GET /api/v1/devices`).
 pub async fn list_devices(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -55,4 +61,53 @@ pub async fn delete_device(
 pub async fn get_summary(State(state): State<AppState>) -> Json<serde_json::Value> {
     let summary = state.get_summary().await;
     Json(serde_json::json!({ "summary": summary }))
+}
+
+/// Endpoint to fetch historical device data (`GET /api/v1/devices/:id/history`).
+pub async fn get_device_history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let days = query.days.unwrap_or(7);
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(days as i64)).timestamp() as u64;
+
+    let read_txn = state
+        .db
+        .begin_read()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let table = read_txn
+        .open_table(crate::db::HISTORY_TABLE)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut history_points = Vec::new();
+
+    let start_key = (id.as_str(), cutoff);
+    let end_key = (id.as_str(), u64::MAX);
+
+    let iter = table
+        .range(start_key..=end_key)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    for entry in iter.flatten() {
+        let (key, value) = entry;
+        let (dev_id, ts) = key.value();
+        if dev_id != id {
+            continue;
+        }
+        if let Ok((cpu, mem, temp, net_in, net_out)) =
+            bincode::deserialize::<crate::db::HistoryPoint>(value.value())
+        {
+            history_points.push(serde_json::json!({
+                "timestamp": ts,
+                "cpu": cpu,
+                "mem": mem,
+                "temp": temp,
+                "net_in": net_in,
+                "net_out": net_out
+            }));
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "history": history_points })))
 }

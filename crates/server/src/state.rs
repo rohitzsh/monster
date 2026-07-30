@@ -1,12 +1,15 @@
 //! Thread-safe state storage and real-time broadcasting manager.
 
+use crate::db::DbCommand;
 use crate::model::{
     CreateDeviceRequest, Device, DeviceStatus, DeviceType, LogEvent, MetricPayload, SummaryStats,
 };
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, RwLock};
+use tracing::warn;
 
 /// Event message broadcast over WebSockets to web dashboard clients.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -32,19 +35,29 @@ pub struct ServerStore {
 pub struct AppState {
     /// Thread-safe in-memory database of devices.
     pub store: Arc<RwLock<ServerStore>>,
+    /// Read-only access to the redb database for history queries.
+    pub db: Arc<redb::Database>,
     /// Broadcast channel for real-time WebSocket notifications.
     pub tx: broadcast::Sender<WsEvent>,
+    /// Channel to send persistence commands to the background redb worker.
+    pub db_tx: tokio::sync::mpsc::Sender<DbCommand>,
     /// Timeout threshold in seconds before an inactive device is marked offline.
     pub heartbeat_timeout_secs: u64,
 }
 
 impl AppState {
     /// Create a new application state with specified heartbeat timeout.
-    pub fn new(heartbeat_timeout_secs: u64) -> Self {
+    pub fn new(
+        heartbeat_timeout_secs: u64,
+        db_tx: tokio::sync::mpsc::Sender<DbCommand>,
+        db: Arc<redb::Database>,
+    ) -> Self {
         let (tx, _) = broadcast::channel(100);
         Self {
             store: Arc::new(RwLock::new(ServerStore::default())),
+            db,
             tx,
+            db_tx,
             heartbeat_timeout_secs,
         }
     }
@@ -74,7 +87,7 @@ impl AppState {
             cpu: 0.0,
             mem: 0.0,
             disk: 0.0,
-            temp: 0.0,
+            temp: None,
             load1: 0.0,
             load5: 0.0,
             load15: 0.0,
@@ -101,7 +114,7 @@ impl AppState {
         device.cpu = payload.cpu;
         device.mem = payload.mem;
         device.disk = payload.disk;
-        device.temp = payload.temp.unwrap_or(45.0);
+        device.temp = payload.temp;
         device.load1 = payload.load_avg.0;
         device.load5 = payload.load_avg.1;
         device.load15 = payload.load_avg.2;
@@ -110,10 +123,12 @@ impl AppState {
         device.uptime = payload.uptime;
         device.last_seen_at = now;
 
-        // Status rules: high load / temp -> Warning or Critical, otherwise Online
-        if device.cpu > 90.0 || device.temp > 85.0 {
+        // Status rules: high load / temp -> Warning or Critical, otherwise Online.
+        // A device with no temperature sensor is judged on CPU alone.
+        let temp = device.temp;
+        if device.cpu > 90.0 || temp.is_some_and(|t| t > 85.0) {
             device.status = DeviceStatus::Critical;
-        } else if device.cpu > 75.0 || device.temp > 75.0 {
+        } else if device.cpu > 75.0 || temp.is_some_and(|t| t > 75.0) {
             device.status = DeviceStatus::Warning;
         } else {
             device.status = DeviceStatus::Online;
@@ -150,7 +165,21 @@ impl AppState {
         let _ = self
             .tx
             .send(WsEvent::Updated(Box::new(updated_device.clone())));
+        self.persist(DbCommand::Upsert(Box::new(updated_device.clone())));
         updated_device
+    }
+
+    /// Hand a command to the background database worker, logging if it cannot be queued.
+    fn persist(&self, cmd: DbCommand) {
+        match self.db_tx.try_send(cmd) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                warn!("Database worker queue is full; dropped a persistence command")
+            }
+            Err(TrySendError::Closed(_)) => {
+                warn!("Database worker is gone; persistence is no longer running")
+            }
+        }
     }
 
     /// Manually register a new device via REST API.
@@ -166,7 +195,7 @@ impl AppState {
             cpu: 0.0,
             mem: 0.0,
             disk: 0.0,
-            temp: 0.0,
+            temp: None,
             load1: 0.0,
             load5: 0.0,
             load15: 0.0,
@@ -183,8 +212,9 @@ impl AppState {
         };
 
         let mut store = self.store.write().await;
-        store.devices.insert(id, device.clone());
+        store.devices.insert(id.clone(), device.clone());
         let _ = self.tx.send(WsEvent::Updated(Box::new(device.clone())));
+        self.persist(DbCommand::Upsert(Box::new(device.clone())));
         device
     }
 
@@ -208,6 +238,8 @@ impl AppState {
         let removed = store.devices.remove(id).is_some();
         if removed {
             let _ = self.tx.send(WsEvent::Deleted(id.to_string()));
+            // Without this the device is resurrected from redb on the next restart.
+            self.persist(DbCommand::Delete(id.to_string()));
         }
         removed
     }

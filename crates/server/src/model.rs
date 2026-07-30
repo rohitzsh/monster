@@ -40,8 +40,8 @@ pub struct MetricHistory {
     pub cpu: Vec<f64>,
     /// Historical memory percentage data points.
     pub mem: Vec<f64>,
-    /// Historical temperature data points.
-    pub temp: Vec<f64>,
+    /// Historical temperature data points. `None` where the device reports no sensor.
+    pub temp: Vec<Option<f64>>,
 }
 
 /// Full record of a monitored system device.
@@ -63,8 +63,8 @@ pub struct Device {
     pub mem: f64,
     /// Current disk usage percentage (0-100%).
     pub disk: f64,
-    /// Current temperature in Celsius.
-    pub temp: f64,
+    /// Current temperature in Celsius, or `None` if the device exposes no sensor.
+    pub temp: Option<f64>,
     /// 1-minute load average.
     pub load1: f64,
     /// 5-minute load average.

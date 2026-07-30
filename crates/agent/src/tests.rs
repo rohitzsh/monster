@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod unit_tests {
-    use crate::collector::SystemCollector;
+    use crate::collector::{DeviceType, SystemCollector};
 
     #[test]
     fn test_collector_sampling() {
@@ -15,8 +15,10 @@ mod unit_tests {
         let metrics = collector.sample();
         assert_eq!(metrics.device_id, "test-id-123");
         assert_eq!(metrics.name, "test-agent");
-        assert_eq!(metrics.device_type, "workstation");
+        assert_eq!(metrics.device_type, Some(DeviceType::Workstation));
         assert!((0.0..=100.0).contains(&metrics.cpu));
         assert!((0.0..=100.0).contains(&metrics.mem));
+        // A host without a temperature sensor must report None, not a stand-in value.
+        assert!(metrics.temp.is_none_or(|t| t > 0.0));
     }
 }

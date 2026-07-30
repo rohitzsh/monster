@@ -27,6 +27,7 @@ pub fn create_router(state: AppState, static_dir: &str) -> Router {
             "/devices/:id",
             get(devices::get_device).delete(devices::delete_device),
         )
+        .route("/devices/:id/history", get(devices::get_device_history))
         .route("/summary", get(devices::get_summary))
         .route("/metrics", post(metrics::ingest_metrics));
 

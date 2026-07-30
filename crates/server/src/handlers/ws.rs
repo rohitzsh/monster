@@ -9,7 +9,8 @@ use axum::{
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use tracing::debug;
+use tokio::sync::broadcast;
+use tracing::{debug, warn};
 
 /// Upgrade HTTP request to WebSocket telemetry subscription connection (`GET /ws`).
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
@@ -31,8 +32,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
     }
 
     // Task to forward broadcast events to this client
+    let snapshot_state = state.clone();
     let mut send_task = tokio::spawn(async move {
-        while let Ok(event) = rx.recv().await {
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                // A slow client can fall behind the broadcast buffer. Recover by
+                // re-syncing with a full snapshot instead of ending the stream,
+                // which would leave the socket open but permanently silent.
+                Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    warn!(
+                        "WebSocket client lagged by {} events; resending snapshot",
+                        missed
+                    );
+                    crate::state::WsEvent::List(snapshot_state.get_devices().await)
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            };
+
             if let Ok(json) = serde_json::to_string(&event) {
                 if sender.send(Message::Text(json)).await.is_err() {
                     break;

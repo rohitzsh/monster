@@ -1,6 +1,7 @@
 //! Hardware and operating system metrics collector module using `sysinfo`.
 
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, System};
 
 /// Categorization of monitored device hardware/software environment.
@@ -33,6 +34,28 @@ pub struct CollectedMetrics {
     pub log_msg: Option<String>,
 }
 
+/// Sum received/transmitted byte counters across every interface.
+fn total_bytes(networks: &Networks) -> (u64, u64) {
+    networks
+        .iter()
+        .fold((0u64, 0u64), |(rx, tx), (_name, net)| {
+            (
+                rx.saturating_add(net.total_received()),
+                tx.saturating_add(net.total_transmitted()),
+            )
+        })
+}
+
+/// Best-effort detection of this host's LAN-facing address.
+///
+/// Opens an unconnected UDP socket towards a public address; no packet is sent,
+/// but the kernel picks the outbound interface, which is the address to report.
+fn local_ip() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
+}
+
 /// System metrics harvester wrapper around `sysinfo::System`.
 pub struct SystemCollector {
     sys: System,
@@ -44,6 +67,7 @@ pub struct SystemCollector {
     device_type: DeviceType,
     prev_rx_bytes: u64,
     prev_tx_bytes: u64,
+    last_sample: Instant,
 }
 
 impl SystemCollector {
@@ -64,6 +88,10 @@ impl SystemCollector {
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
 
+        // Seed the byte counters from the current totals. Starting from zero would
+        // make the first sample report all traffic since boot as a rate spike.
+        let (prev_rx_bytes, prev_tx_bytes) = total_bytes(&networks);
+
         let parsed_device_type = match device_type.to_lowercase().as_str() {
             "network" => DeviceType::Network,
             "iot" => DeviceType::Iot,
@@ -80,8 +108,9 @@ impl SystemCollector {
             device_id,
             name,
             device_type: parsed_device_type,
-            prev_rx_bytes: 0,
-            prev_tx_bytes: 0,
+            prev_rx_bytes,
+            prev_tx_bytes,
+            last_sample: Instant::now(),
         }
     }
 
@@ -126,57 +155,45 @@ impl SystemCollector {
         let load_tuple = (load_avg.one, load_avg.five, load_avg.fifteen);
 
         // Network calculation (Mbps estimate)
-        let mut total_rx = 0u64;
-        let mut total_tx = 0u64;
-        for (_interface, net) in self.networks.iter() {
-            total_rx += net.total_received();
-            total_tx += net.total_transmitted();
-        }
+        let (total_rx, total_tx) = total_bytes(&self.networks);
 
         let rx_delta = total_rx.saturating_sub(self.prev_rx_bytes);
         let tx_delta = total_tx.saturating_sub(self.prev_tx_bytes);
         self.prev_rx_bytes = total_rx;
         self.prev_tx_bytes = total_tx;
 
-        // Convert bytes to Mbps over 3s sample interval
-        let net_in_mbps = ((rx_delta * 8) as f64 / 1_000_000.0 / 3.0).max(0.1);
-        let net_out_mbps = ((tx_delta * 8) as f64 / 1_000_000.0 / 3.0).max(0.1);
+        // Convert bytes to Mbps over the time actually elapsed since the previous
+        // sample, which is not necessarily the configured interval.
+        let elapsed = self.last_sample.elapsed().as_secs_f64().max(0.001);
+        self.last_sample = Instant::now();
+        let net_in_mbps = (rx_delta * 8) as f64 / 1_000_000.0 / elapsed;
+        let net_out_mbps = (tx_delta * 8) as f64 / 1_000_000.0 / elapsed;
 
         // System uptime
         let uptime = System::uptime();
 
-        // Highest Component Temperature
-        let mut max_temp = 0.0_f32;
-        for comp in self.components.iter() {
-            let t = comp.temperature();
-            if t > max_temp {
-                max_temp = t;
-            }
-        }
-        let temp = if max_temp > 0.0 {
-            max_temp as f64
-        } else {
-            42.5
-        };
+        // Highest component temperature, or None when the host exposes no sensor
+        // (common on VMs and many SBCs). Reporting a plausible-looking number here
+        // would make the dashboard lie.
+        let temp = self
+            .components
+            .iter()
+            .map(|comp| comp.temperature())
+            .filter(|t| *t > 0.0 && t.is_finite())
+            .fold(None::<f32>, |acc, t| Some(acc.map_or(t, |m: f32| m.max(t))))
+            .map(|t| t as f64);
 
-        // Local IP estimation
-        let ip = std::net::UdpSocket::bind("0.0.0.0:0")
-            .and_then(|s| {
-                s.connect("8.8.8.8:80")?;
-                s.local_addr()
-            })
-            .map(|a| a.ip().to_string())
-            .unwrap_or_else(|_| "127.0.0.1".to_string());
+        let ip = local_ip();
 
         CollectedMetrics {
             device_id: self.device_id.clone(),
             name: self.name.clone(),
-            ip: Some(ip),
+            ip,
             device_type: Some(self.device_type.clone()),
             cpu: global_cpu,
             mem: mem_pct,
             disk: disk_pct,
-            temp: Some(temp),
+            temp,
             load_avg: load_tuple,
             net_in: (net_in_mbps * 100.0).round() / 100.0,
             net_out: (net_out_mbps * 100.0).round() / 100.0,
