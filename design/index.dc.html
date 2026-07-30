@@ -201,6 +201,15 @@
           <div>Net Out <span style="float:right; font-family:'JetBrains Mono',monospace;">{{ selectedDevice.netOut }}</span></div>
         </div>
 
+        <!-- Only rendered for devices that report a power-health source (e.g.
+             Raspberry Pi under-voltage/throttling); absent for everything else. -->
+        <sc-if value="{{ selectedDevice.hasPower }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; margin-bottom:22px; border-radius:8px; background:oklch(95% 0.004 250); font-size:12px;">
+            <span>Power ({{ selectedDevice.powerSource }})</span>
+            <span style="font-family:'JetBrains Mono',monospace; font-weight:700; color:{{ selectedDevice.powerColor }};">{{ selectedDevice.powerDisplay }}</span>
+          </div>
+        </sc-if>
+
         <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(48% 0.008 250); font-weight:600; margin-bottom:8px;">Recent Events</div>
         <div style="max-height:170px; overflow-y:auto; margin-bottom:20px; border:1px solid oklch(91% 0.006 250); border-radius:8px;">
           <sc-for list="{{ selectedDevice.logs }}" as="l" hint-placeholder-count="4">
@@ -462,10 +471,16 @@ class Component extends DCLogic {
       uptime: d.uptime || 0,
       lastSeenAt: d.last_seen_at ? d.last_seen_at * 1000 : Date.now(),
       tags: d.tags || [],
+      // Generic power-health signal: null unless some collector (Raspberry Pi
+      // today, others later) actually reports one. Never fabricated.
+      powerSource: d.power_source ?? null,
+      throttled: (d.throttled === null || d.throttled === undefined) ? null : d.throttled,
+      underVoltage: (d.under_voltage === null || d.under_voltage === undefined) ? null : d.under_voltage,
       history: {
         cpu: (d.history && d.history.cpu && d.history.cpu.length) ? d.history.cpu : [d.cpu || 0],
         mem: (d.history && d.history.mem && d.history.mem.length) ? d.history.mem : [d.mem || 0],
         temp: (d.history && d.history.temp && d.history.temp.length) ? d.history.temp : [(d.temp === null || d.temp === undefined) ? null : d.temp],
+        throttled: (d.history && d.history.throttled && d.history.throttled.length) ? d.history.throttled : [(d.throttled === null || d.throttled === undefined) ? null : d.throttled],
       },
       logs: (d.logs || []).map(l => ({ ts: l.ts > 1e11 ? l.ts : l.ts * 1000, message: l.message })),
     };
@@ -474,7 +489,7 @@ class Component extends DCLogic {
   statusLevel(d) {
     if (d.status === 'offline') return 'offline';
     if (d.cpu >= 90 || d.temp >= 82 || d.mem >= 92) return 'critical';
-    if (d.cpu >= 75 || d.temp >= 70 || d.mem >= 80) return 'warning';
+    if (d.cpu >= 75 || d.temp >= 70 || d.mem >= 80 || d.throttled) return 'warning';
     return 'healthy';
   }
 
@@ -565,6 +580,43 @@ class Component extends DCLogic {
     const data = this.state.historyData;
     if (!data || data.length === 0) return;
 
+    const datasets = [
+      { label: 'CPU %', data: data.map(d => d.cpu), borderColor: COLORS.healthy, tension: 0.1, pointRadius: 0, borderWidth: 2 },
+      { label: 'Memory %', data: data.map(d => d.mem), borderColor: COLORS.warning, tension: 0.1, pointRadius: 0, borderWidth: 2 },
+      { label: 'Temp °C', data: data.map(d => d.temp), borderColor: COLORS.critical, tension: 0.1, pointRadius: 0, borderWidth: 2 }
+    ];
+
+    const scales = {
+      x: { ticks: { maxTicksLimit: 10 } },
+      y: { beginAtZero: true }
+    };
+
+    // Only devices with a power-health source (Raspberry Pi today, others
+    // later) ever populate this; otherwise every point is null and the
+    // dataset is skipped entirely rather than drawing a flat "off" line.
+    const hasThrottleData = data.some(d => d.throttled !== null && d.throttled !== undefined);
+    if (hasThrottleData) {
+      datasets.push({
+        label: 'Throttled',
+        data: data.map(d => (d.throttled === null || d.throttled === undefined) ? null : (d.throttled ? 1 : 0)),
+        borderColor: COLORS.critical,
+        backgroundColor: COLORS.critical,
+        stepped: true,
+        pointRadius: 0,
+        borderWidth: 2,
+        yAxisID: 'y1',
+      });
+      // Secondary 0/1 axis so the boolean series doesn't get squashed onto the
+      // same 0-100 scale as the percentage metrics.
+      scales.y1 = {
+        position: 'right',
+        min: 0,
+        max: 1,
+        ticks: { stepSize: 1, callback: (v) => v === 1 ? 'On' : 'Off' },
+        grid: { drawOnChartArea: false },
+      };
+    }
+
     this.chartInstance = new Chart(ctx, {
       type: 'line',
       data: {
@@ -572,21 +624,14 @@ class Component extends DCLogic {
           const dt = new Date(d.timestamp * 1000);
           return dt.getMonth()+1 + '/' + dt.getDate() + ' ' + dt.getHours() + ':' + String(dt.getMinutes()).padStart(2,'0');
         }),
-        datasets: [
-          { label: 'CPU %', data: data.map(d => d.cpu), borderColor: COLORS.healthy, tension: 0.1, pointRadius: 0, borderWidth: 2 },
-          { label: 'Memory %', data: data.map(d => d.mem), borderColor: COLORS.warning, tension: 0.1, pointRadius: 0, borderWidth: 2 },
-          { label: 'Temp °C', data: data.map(d => d.temp), borderColor: COLORS.critical, tension: 0.1, pointRadius: 0, borderWidth: 2 }
-        ]
+        datasets
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         animation: false,
         interaction: { mode: 'index', intersect: false },
-        scales: {
-          x: { ticks: { maxTicksLimit: 10 } },
-          y: { beginAtZero: true }
-        }
+        scales
       }
     });
   }
@@ -603,6 +648,11 @@ class Component extends DCLogic {
     const hasTemp = d.temp !== null && d.temp !== undefined;
     const tempColor = (d.status === 'offline' || !hasTemp) ? COLORS.offline : metricColor(d.temp, 70, 82);
     const tempDisplay = hasTemp ? Math.round(d.temp) + '°C' : '—';
+    // Generic: any device with a recognized power-health source shows this row,
+    // regardless of which collector produced it (Raspberry Pi today, others later).
+    const hasPower = !!d.powerSource;
+    const powerColor = d.throttled ? COLORS.critical : COLORS.healthy;
+    const powerDisplay = d.throttled ? (d.underVoltage ? 'Under-voltage' : 'Throttled') : 'OK';
     return {
       id: d.id, name: d.name, ip: d.ip, typeLabel: TYPE_LABELS[d.type] || d.type,
       statusColor: color, statusLabel, cpuColor, memColor, diskColor, tempColor,
@@ -612,6 +662,7 @@ class Component extends DCLogic {
       netOut: (d.netOut < 1 ? d.netOut.toFixed(2) : Math.round(d.netOut)) + ' Mbps',
       uptimeLabel: d.status === 'offline' ? '—' : formatUptime(d.uptime),
       lastSeenLabel: d.status === 'offline' ? formatAgo(d.lastSeenAt) : 'now',
+      hasPower, powerSource: d.powerSource, powerColor, powerDisplay,
       metricBars: [
         { label: 'CPU', display: Math.round(d.cpu) + '%', pct: Math.round(d.cpu) + '%', color: cpuColor },
         { label: 'Memory', display: Math.round(d.mem) + '%', pct: Math.round(d.mem) + '%', color: memColor },

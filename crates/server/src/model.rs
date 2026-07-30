@@ -42,6 +42,9 @@ pub struct MetricHistory {
     pub mem: Vec<f64>,
     /// Historical temperature data points. `None` where the device reports no sensor.
     pub temp: Vec<Option<f64>>,
+    /// Historical power-throttle state. `None` where the device reports no
+    /// power-health source at all.
+    pub throttled: Vec<Option<bool>>,
 }
 
 /// Full record of a monitored system device.
@@ -85,6 +88,13 @@ pub struct Device {
     pub history: MetricHistory,
     /// Recent log events.
     pub logs: Vec<LogEvent>,
+    /// Identifies which power-health source reported `throttled`/`under_voltage`
+    /// (e.g. `"raspberry-pi"`), or `None` if this device has none.
+    pub power_source: Option<String>,
+    /// An active power-related constraint is in effect right now.
+    pub throttled: Option<bool>,
+    /// An under-voltage condition is active right now.
+    pub under_voltage: Option<bool>,
 }
 
 /// Incoming metric payload posted by remote monitor agents.
@@ -116,6 +126,12 @@ pub struct MetricPayload {
     pub uptime: u64,
     /// Optional log message to report.
     pub log_msg: Option<String>,
+    /// Identifies which power-health source reported `throttled`/`under_voltage`.
+    pub power_source: Option<String>,
+    /// An active power-related constraint is in effect right now.
+    pub throttled: Option<bool>,
+    /// An under-voltage condition is active right now.
+    pub under_voltage: Option<bool>,
 }
 
 /// Request payload to manually register a device.

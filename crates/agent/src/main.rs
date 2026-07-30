@@ -2,6 +2,7 @@
 
 mod collector;
 mod config;
+mod power;
 mod reporter;
 
 #[cfg(test)]

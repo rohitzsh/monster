@@ -45,6 +45,14 @@ pub struct AppState {
     pub heartbeat_timeout_secs: u64,
 }
 
+/// Append a history sample, keeping only the most recent 30 points.
+fn push_capped<T>(series: &mut Vec<T>, value: T) {
+    series.push(value);
+    if series.len() > 30 {
+        series.remove(0);
+    }
+}
+
 impl AppState {
     /// Create a new application state with specified heartbeat timeout.
     pub fn new(
@@ -101,6 +109,9 @@ impl AppState {
                 ts: now,
                 message: "Device registered via monitor agent".to_string(),
             }],
+            power_source: None,
+            throttled: None,
+            under_voltage: None,
         });
 
         // Update fields
@@ -123,30 +134,51 @@ impl AppState {
         device.uptime = payload.uptime;
         device.last_seen_at = now;
 
+        let was_throttled = device.throttled.unwrap_or(false);
+        device.power_source = payload.power_source;
+        device.throttled = payload.throttled;
+        device.under_voltage = payload.under_voltage;
+
         // Status rules: high load / temp -> Warning or Critical, otherwise Online.
-        // A device with no temperature sensor is judged on CPU alone.
+        // A device with no temperature sensor is judged on CPU alone. Active power
+        // throttling always implies at least a Warning, since the device is
+        // measurably degraded even if CPU/temp look fine.
         let temp = device.temp;
+        let is_throttled = device.throttled.unwrap_or(false);
         if device.cpu > 90.0 || temp.is_some_and(|t| t > 85.0) {
             device.status = DeviceStatus::Critical;
-        } else if device.cpu > 75.0 || temp.is_some_and(|t| t > 75.0) {
+        } else if device.cpu > 75.0 || temp.is_some_and(|t| t > 75.0) || is_throttled {
             device.status = DeviceStatus::Warning;
         } else {
             device.status = DeviceStatus::Online;
         }
 
+        if is_throttled && !was_throttled {
+            device.logs.insert(
+                0,
+                LogEvent {
+                    ts: now,
+                    message: format!(
+                        "Power throttling detected ({})",
+                        device.power_source.as_deref().unwrap_or("unknown source")
+                    ),
+                },
+            );
+        } else if was_throttled && !is_throttled {
+            device.logs.insert(
+                0,
+                LogEvent {
+                    ts: now,
+                    message: "Power throttling cleared".to_string(),
+                },
+            );
+        }
+
         // Push time series history (max 30 samples)
-        device.history.cpu.push(device.cpu);
-        if device.history.cpu.len() > 30 {
-            device.history.cpu.remove(0);
-        }
-        device.history.mem.push(device.mem);
-        if device.history.mem.len() > 30 {
-            device.history.mem.remove(0);
-        }
-        device.history.temp.push(device.temp);
-        if device.history.temp.len() > 30 {
-            device.history.temp.remove(0);
-        }
+        push_capped(&mut device.history.cpu, device.cpu);
+        push_capped(&mut device.history.mem, device.mem);
+        push_capped(&mut device.history.temp, device.temp);
+        push_capped(&mut device.history.throttled, device.throttled);
 
         if let Some(msg) = payload.log_msg {
             device.logs.insert(
@@ -209,6 +241,9 @@ impl AppState {
                 ts: now,
                 message: "Manually created via web console, waiting for agent...".to_string(),
             }],
+            power_source: None,
+            throttled: None,
+            under_voltage: None,
         };
 
         let mut store = self.store.write().await;

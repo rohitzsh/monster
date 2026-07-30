@@ -41,7 +41,19 @@ mod unit_tests {
             net_out: 8.5,
             uptime: 10000,
             log_msg: None,
+            power_source: None,
+            throttled: None,
+            under_voltage: None,
         }
+    }
+
+    /// Sample payload with a power-health source reporting the given throttle state.
+    fn payload_with_power(device_id: &str, throttled: bool, under_voltage: bool) -> MetricPayload {
+        let mut p = payload(device_id, 20.0, Some(50.0));
+        p.power_source = Some("raspberry-pi".to_string());
+        p.throttled = Some(throttled);
+        p.under_voltage = Some(under_voltage);
+        p
     }
 
     /// Give the background database worker a moment to drain its queue.
@@ -133,6 +145,63 @@ mod unit_tests {
         let idle = state.ingest_metrics(payload("idle-vm", 10.0, None)).await;
         assert_eq!(idle.temp, None);
         assert_eq!(idle.status, DeviceStatus::Online);
+    }
+
+    /// A device reporting active power throttling must be surfaced as at least
+    /// Warning even when CPU/temp look fine, and a log entry must appear exactly
+    /// once on the false->true edge, not on every sample.
+    #[tokio::test]
+    async fn test_throttling_forces_warning_and_logs_once() {
+        let (state, _db, _dir) = test_state();
+
+        let first = state
+            .ingest_metrics(payload_with_power("pi-01", true, true))
+            .await;
+        assert_eq!(first.status, DeviceStatus::Warning);
+        assert_eq!(first.throttled, Some(true));
+        assert_eq!(first.under_voltage, Some(true));
+        assert_eq!(first.power_source.as_deref(), Some("raspberry-pi"));
+        assert_eq!(first.history.throttled, vec![Some(true)]);
+        let throttle_logs = first
+            .logs
+            .iter()
+            .filter(|l| l.message.contains("Power throttling detected"))
+            .count();
+        assert_eq!(throttle_logs, 1);
+
+        // Still throttled on the next sample: no duplicate log entry.
+        let second = state
+            .ingest_metrics(payload_with_power("pi-01", true, true))
+            .await;
+        let throttle_logs = second
+            .logs
+            .iter()
+            .filter(|l| l.message.contains("Power throttling detected"))
+            .count();
+        assert_eq!(throttle_logs, 1);
+        assert_eq!(second.history.throttled, vec![Some(true), Some(true)]);
+
+        // Clears: status recovers and a "cleared" entry is logged once.
+        let cleared = state
+            .ingest_metrics(payload_with_power("pi-01", false, false))
+            .await;
+        assert_eq!(cleared.status, DeviceStatus::Online);
+        assert!(cleared
+            .logs
+            .iter()
+            .any(|l| l.message == "Power throttling cleared"));
+    }
+
+    /// A device with no power-health source must report `None` throughout,
+    /// never a fabricated `false`.
+    #[tokio::test]
+    async fn test_no_power_source_is_not_fabricated() {
+        let (state, _db, _dir) = test_state();
+        let device = state.ingest_metrics(payload("plain-vm", 20.0, None)).await;
+        assert_eq!(device.power_source, None);
+        assert_eq!(device.throttled, None);
+        assert_eq!(device.under_voltage, None);
+        assert_eq!(device.status, DeviceStatus::Online);
     }
 
     /// Regression test: a deleted device used to survive in redb and reappear on

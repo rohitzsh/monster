@@ -10,8 +10,8 @@ use tracing::{error, info, warn};
 pub const DEVICES_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("devices");
 pub const HISTORY_TABLE: TableDefinition<(&str, u64), &[u8]> = TableDefinition::new("history");
 
-/// A single historical sample as stored in `HISTORY_TABLE`.
-pub type HistoryPoint = (f64, f64, Option<f64>, f64, f64);
+/// A single historical sample as stored in `HISTORY_TABLE`: (cpu, mem, temp, net_in, net_out, throttled).
+pub type HistoryPoint = (f64, f64, Option<f64>, f64, f64, Option<bool>);
 
 /// Work item sent to the background database worker.
 #[derive(Debug, Clone)]
@@ -101,13 +101,13 @@ fn apply_batch(db: &Database, batch: &[DbCommand]) -> Result<(), Box<dyn std::er
 
                     // 2. Insert time-series historical data point
                     let timestamp = chrono::Utc::now().timestamp() as u64;
-                    // Store: (cpu, mem, temp, net_in, net_out)
                     let data_point: HistoryPoint = (
                         device.cpu,
                         device.mem,
                         device.temp,
                         device.net_in,
                         device.net_out,
+                        device.throttled,
                     );
 
                     match bincode::serialize(&data_point) {

@@ -95,7 +95,7 @@ pub async fn get_device_history(
         if dev_id != id {
             continue;
         }
-        if let Ok((cpu, mem, temp, net_in, net_out)) =
+        if let Ok((cpu, mem, temp, net_in, net_out, throttled)) =
             bincode::deserialize::<crate::db::HistoryPoint>(value.value())
         {
             history_points.push(serde_json::json!({
@@ -104,7 +104,8 @@ pub async fn get_device_history(
                 "mem": mem,
                 "temp": temp,
                 "net_in": net_in,
-                "net_out": net_out
+                "net_out": net_out,
+                "throttled": throttled
             }));
         }
     }

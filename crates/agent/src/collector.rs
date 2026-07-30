@@ -1,5 +1,6 @@
 //! Hardware and operating system metrics collector module using `sysinfo`.
 
+use crate::power::{self, PowerMonitor};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use sysinfo::{Components, CpuRefreshKind, Disks, Networks, System};
@@ -32,6 +33,14 @@ pub struct CollectedMetrics {
     pub net_out: f64,
     pub uptime: u64,
     pub log_msg: Option<String>,
+    /// Identifies which `PowerMonitor` produced `throttled`/`under_voltage`, or
+    /// `None` if this device has no recognized power-health source.
+    pub power_source: Option<String>,
+    /// An active power-related constraint (frequency capped, throttled, or
+    /// under-voltage) is in effect right now.
+    pub throttled: Option<bool>,
+    /// An under-voltage condition is active right now.
+    pub under_voltage: Option<bool>,
 }
 
 /// Sum received/transmitted byte counters across every interface.
@@ -68,6 +77,7 @@ pub struct SystemCollector {
     prev_rx_bytes: u64,
     prev_tx_bytes: u64,
     last_sample: Instant,
+    power: Option<Box<dyn PowerMonitor>>,
 }
 
 impl SystemCollector {
@@ -111,6 +121,7 @@ impl SystemCollector {
             prev_rx_bytes,
             prev_tx_bytes,
             last_sample: Instant::now(),
+            power: power::detect(),
         }
     }
 
@@ -185,6 +196,20 @@ impl SystemCollector {
 
         let ip = local_ip();
 
+        let (power_source, throttled, under_voltage) = match &mut self.power {
+            Some(monitor) => match monitor.sample() {
+                Some(reading) => (
+                    Some(monitor.name().to_string()),
+                    Some(reading.throttled),
+                    Some(reading.under_voltage),
+                ),
+                // Detected once at startup, so a transient read failure keeps
+                // reporting the source without inventing a throttled state.
+                None => (Some(monitor.name().to_string()), None, None),
+            },
+            None => (None, None, None),
+        };
+
         CollectedMetrics {
             device_id: self.device_id.clone(),
             name: self.name.clone(),
@@ -199,6 +224,9 @@ impl SystemCollector {
             net_out: (net_out_mbps * 100.0).round() / 100.0,
             uptime,
             log_msg: Some("Periodic metric telemetry heartbeat".to_string()),
+            power_source,
+            throttled,
+            under_voltage,
         }
     }
 }
