@@ -1,0 +1,6 @@
+target
+.cargo
+/tmp
+version.txt
+.thumbnail
+.DS_Store

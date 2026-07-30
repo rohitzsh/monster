@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; background: oklch(97% 0.004 250); }
+    ::selection { background: oklch(55% 0.14 195 / 0.25); }
+    input::placeholder { color: oklch(60% 0.008 250); }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+</helmet>
+
+<div style="min-height:100vh; display:flex; flex-direction:column; font-family:'Space Grotesk',system-ui,sans-serif; color:oklch(20% 0.01 250); background:oklch(97% 0.004 250);">
+
+  <!-- Top bar -->
+  <div style="display:flex; align-items:center; gap:20px; padding:18px 32px; background:oklch(99% 0.002 250); border-bottom:1px solid oklch(89% 0.006 250); flex-wrap:wrap; position:sticky; top:0; z-index:10;">
+    <div style="display:flex; align-items:center; gap:10px; margin-right:8px;">
+      <div style="width:12px; height:12px; border-radius:50%; background:oklch(55% 0.14 195); box-shadow:0 0 10px oklch(55% 0.14 195 / 0.4);"></div>
+      <div style="font-size:19px; font-weight:700; letter-spacing:0.02em;">Monster</div>
+      <div style="font-size:12px; color:oklch(50% 0.008 250); font-weight:500;">Device Monitoring</div>
+    </div>
+
+    <input type="text" placeholder="Search by name or IP" value="{{ search }}" onChange="{{ onSearchChange }}" style="flex:1; min-width:200px; max-width:320px; background:oklch(98% 0.002 250); border:1px solid oklch(85% 0.008 250); border-radius:8px; padding:9px 12px; color:oklch(20% 0.01 250); font-family:'Space Grotesk',sans-serif; font-size:13px; outline:none;" />
+
+    <div style="display:flex; gap:6px;">
+      <sc-for list="{{ statusFilters }}" as="f" hint-placeholder-count="4">
+        <div onClick="{{ f.onClick }}" style="{{ f.style }}">{{ f.label }}</div>
+      </sc-for>
+    </div>
+
+    <div style="flex:1;"></div>
+    <div style="font-size:12px; color:oklch(50% 0.008 250); font-family:'JetBrains Mono',monospace;">{{ deviceCount }} devices</div>
+
+    <div style="display:flex; gap:4px; background:oklch(94% 0.006 250); border:1px solid oklch(87% 0.007 250); border-radius:8px; padding:3px;">
+      <div onClick="{{ setGridView }}" style="{{ gridToggleStyle }}" title="Grid view">
+        <div style="display:grid; grid-template-columns:repeat(2,5px); grid-template-rows:repeat(2,5px); gap:2px;">
+          <div style="background:currentColor; width:5px; height:5px;"></div><div style="background:currentColor; width:5px; height:5px;"></div>
+          <div style="background:currentColor; width:5px; height:5px;"></div><div style="background:currentColor; width:5px; height:5px;"></div>
+        </div>
+      </div>
+      <div onClick="{{ setTableView }}" style="{{ tableToggleStyle }}" title="Table view">
+        <div style="display:flex; flex-direction:column; gap:3px;">
+          <div style="background:currentColor; width:16px; height:2px;"></div>
+          <div style="background:currentColor; width:16px; height:2px;"></div>
+          <div style="background:currentColor; width:16px; height:2px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <div onClick="{{ openAddModal }}" style="background:oklch(55% 0.14 195); color:oklch(99% 0 0); font-weight:600; font-size:13px; padding:10px 16px; border-radius:8px; cursor:pointer; white-space:nowrap;" style-hover="background:oklch(50% 0.14 195);">+ Add Device</div>
+  </div>
+
+  <!-- Summary stats -->
+  <div style="display:grid; grid-template-columns:repeat(5,1fr); gap:16px; padding:20px 32px 0;">
+    <sc-for list="{{ summaryStats }}" as="s" hint-placeholder-count="5">
+      <div style="background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:12px; padding:16px 18px;">
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:oklch(55% 0.008 250); font-weight:600; margin-bottom:8px;">{{ s.label }}</div>
+        <div style="font-family:'JetBrains Mono',monospace; font-size:26px; font-weight:600; color:{{ s.color }};">{{ s.value }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <!-- Main content -->
+  <div style="flex:1; padding:24px 32px 48px;">
+
+    <sc-if value="{{ hasNoResults }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex; align-items:center; justify-content:center; height:280px; color:oklch(55% 0.008 250); font-size:14px;">No devices match your filters.</div>
+    </sc-if>
+
+    <sc-if value="{{ isGridView }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:18px;">
+        <sc-for list="{{ deviceCards }}" as="d" hint-placeholder-count="8">
+          <div style="background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:14px; padding:20px; cursor:pointer; transition:border-color 0.15s, box-shadow 0.15s;" style-hover="border-color:oklch(78% 0.01 250); box-shadow:0 2px 10px oklch(20% 0.01 250 / 0.06);" onClick="{{ d.onOpen }}">
+
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+              <div style="width:9px; height:9px; border-radius:50%; background:{{ d.statusColor }}; flex-shrink:0;"></div>
+              <div style="font-weight:600; font-size:15px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ d.name }}</div>
+              <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:oklch(48% 0.008 250); background:oklch(93% 0.006 250); padding:3px 8px; border-radius:20px;">{{ d.typeLabel }}</div>
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:oklch(52% 0.008 250); margin-bottom:16px;">{{ d.ip }} &middot; {{ d.statusLabel }}</div>
+
+            <div style="display:flex; flex-direction:column; gap:9px; margin-bottom:14px;">
+              <sc-for list="{{ d.metricBars }}" as="m" hint-placeholder-count="4">
+                <div>
+                  <div style="display:flex; justify-content:space-between; font-size:11px; color:oklch(48% 0.008 250); margin-bottom:4px;">
+                    <span>{{ m.label }}</span>
+                    <span style="font-family:'JetBrains Mono',monospace; color:{{ m.color }}; font-weight:600;">{{ m.display }}</span>
+                  </div>
+                  <div style="height:5px; border-radius:3px; background:oklch(91% 0.006 250); overflow:hidden;">
+                    <div style="height:100%; border-radius:3px; background:{{ m.color }}; width:{{ m.pct }};"></div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:11px; color:oklch(50% 0.008 250); margin-bottom:14px;">
+              <div>Load (1m) <span style="font-family:'JetBrains Mono',monospace; color:oklch(25% 0.01 250); float:right;">{{ d.load1 }}</span></div>
+              <div>Uptime <span style="font-family:'JetBrains Mono',monospace; color:oklch(25% 0.01 250); float:right;">{{ d.uptimeLabel }}</span></div>
+              <div>Net In <span style="font-family:'JetBrains Mono',monospace; color:oklch(25% 0.01 250); float:right;">{{ d.netIn }}</span></div>
+              <div>Net Out <span style="font-family:'JetBrains Mono',monospace; color:oklch(25% 0.01 250); float:right;">{{ d.netOut }}</span></div>
+            </div>
+
+            <div style="display:flex; gap:14px; padding-top:12px; border-top:1px solid oklch(91% 0.006 250);">
+              <div onClick="{{ d.onEdit }}" style="font-size:12px; font-weight:600; color:oklch(50% 0.008 250);" style-hover="color:oklch(55% 0.14 195);">Edit</div>
+              <div onClick="{{ d.onDelete }}" style="font-size:12px; font-weight:600; color:oklch(50% 0.008 250);" style-hover="color:oklch(55% 0.19 25);">Delete</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isTableView }}" hint-placeholder-val="{{ false }}">
+      <div style="background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:12px; overflow:hidden;">
+        <div style="display:grid; grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr 1fr 0.9fr; gap:10px; padding:12px 20px; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; font-weight:600; color:oklch(50% 0.008 250); border-bottom:1px solid oklch(89% 0.006 250);">
+          <div>Device</div><div>Status</div><div>CPU</div><div>Mem</div><div>Disk</div><div>Temp</div><div>Load(1m)</div><div>Uptime</div><div>Actions</div>
+        </div>
+        <sc-for list="{{ deviceCards }}" as="d" hint-placeholder-count="8">
+          <div style="display:grid; grid-template-columns:1.6fr 0.9fr 0.9fr 0.9fr 0.9fr 0.9fr 1fr 1fr 0.9fr; gap:10px; align-items:center; padding:12px 20px; border-bottom:1px solid oklch(93% 0.006 250); cursor:pointer;" style-hover="background:oklch(96% 0.004 250);" onClick="{{ d.onOpen }}">
+            <div>
+              <div style="font-weight:600; font-size:13px;">{{ d.name }}</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:oklch(52% 0.008 250);">{{ d.ip }}</div>
+            </div>
+            <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:{{ d.statusColor }};">
+              <div style="width:7px; height:7px; border-radius:50%; background:{{ d.statusColor }};"></div>{{ d.statusLabel }}
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ d.cpuColor }};">{{ d.cpuDisplay }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ d.memColor }};">{{ d.memDisplay }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ d.diskColor }};">{{ d.diskDisplay }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ d.tempColor }};">{{ d.tempDisplay }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:oklch(25% 0.01 250);">{{ d.load1 }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:oklch(25% 0.01 250);">{{ d.uptimeLabel }}</div>
+            <div style="display:flex; gap:12px;" onClick="{{ stopProp }}">
+              <div onClick="{{ d.onEdit }}" style="font-size:12px; font-weight:600; color:oklch(50% 0.008 250);" style-hover="color:oklch(55% 0.14 195);">Edit</div>
+              <div onClick="{{ d.onDelete }}" style="font-size:12px; font-weight:600; color:oklch(50% 0.008 250);" style-hover="color:oklch(55% 0.19 25);">Delete</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- Detail slide-over -->
+  <sc-if value="{{ selectedDevice }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; background:oklch(20% 0.01 250 / 0.35); display:flex; justify-content:flex-end; z-index:50;" onClick="{{ closeDetail }}">
+      <div style="width:440px; max-width:92vw; height:100%; background:oklch(99% 0.002 250); border-left:1px solid oklch(89% 0.006 250); padding:28px; overflow-y:auto;" onClick="{{ stopProp }}">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="width:10px; height:10px; border-radius:50%; background:{{ selectedDevice.statusColor }};"></div>
+              <div style="font-size:19px; font-weight:700;">{{ selectedDevice.name }}</div>
+            </div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:12px; color:oklch(52% 0.008 250); margin-top:4px;">{{ selectedDevice.ip }} &middot; {{ selectedDevice.typeLabel }}</div>
+          </div>
+          <div onClick="{{ closeDetail }}" style="cursor:pointer; font-size:20px; color:oklch(55% 0.008 250); line-height:1; padding:4px;" style-hover="color:oklch(20% 0.01 250);">&times;</div>
+        </div>
+
+        <div style="font-size:13px; font-weight:600; color:{{ selectedDevice.statusColor }}; margin-bottom:22px;">{{ selectedDevice.statusLabel }} &middot; last seen {{ selectedDevice.lastSeenLabel }}</div>
+
+        <sc-for list="{{ selectedDevice.charts }}" as="c">
+          <div style="margin-bottom:20px;">
+            <div style="display:flex; justify-content:space-between; font-size:12px; color:oklch(48% 0.008 250); margin-bottom:6px;">
+              <span>{{ c.label }}</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-weight:700; color:{{ c.color }};">{{ c.display }}</span>
+            </div>
+            <svg width="100%" height="56" viewBox="0 0 360 56" preserveAspectRatio="none" style="display:block; background:oklch(95% 0.004 250); border-radius:8px;">
+              <polyline data-points="{{ c.points }}" fill="none" stroke="{{ c.color }}" stroke-width="2"></polyline>
+            </svg>
+          </div>
+        </sc-for>
+
+        <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:20px;">
+          <div style="background:oklch(95% 0.004 250); border-radius:8px; padding:10px 12px;">
+            <div style="font-size:10px; color:oklch(52% 0.008 250); text-transform:uppercase;">Load 1m</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-weight:600;">{{ selectedDevice.load1 }}</div>
+          </div>
+          <div style="background:oklch(95% 0.004 250); border-radius:8px; padding:10px 12px;">
+            <div style="font-size:10px; color:oklch(52% 0.008 250); text-transform:uppercase;">Load 5m</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-weight:600;">{{ selectedDevice.load5 }}</div>
+          </div>
+          <div style="background:oklch(95% 0.004 250); border-radius:8px; padding:10px 12px;">
+            <div style="font-size:10px; color:oklch(52% 0.008 250); text-transform:uppercase;">Load 15m</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-weight:600;">{{ selectedDevice.load15 }}</div>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:22px; font-size:12px;">
+          <div>Disk <span style="float:right; font-family:'JetBrains Mono',monospace; color:{{ selectedDevice.diskColor }};">{{ selectedDevice.diskDisplay }}</span></div>
+          <div>Uptime <span style="float:right; font-family:'JetBrains Mono',monospace;">{{ selectedDevice.uptimeLabel }}</span></div>
+          <div>Net In <span style="float:right; font-family:'JetBrains Mono',monospace;">{{ selectedDevice.netIn }}</span></div>
+          <div>Net Out <span style="float:right; font-family:'JetBrains Mono',monospace;">{{ selectedDevice.netOut }}</span></div>
+        </div>
+
+        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(48% 0.008 250); font-weight:600; margin-bottom:8px;">Recent Events</div>
+        <div style="max-height:170px; overflow-y:auto; margin-bottom:20px; border:1px solid oklch(91% 0.006 250); border-radius:8px;">
+          <sc-for list="{{ selectedDevice.logs }}" as="l" hint-placeholder-count="4">
+            <div style="display:flex; gap:10px; padding:9px 12px; border-bottom:1px solid oklch(93% 0.006 250); font-size:12px;">
+              <div style="font-family:'JetBrains Mono',monospace; color:oklch(55% 0.008 250); white-space:nowrap;">{{ l.time }}</div>
+              <div style="color:oklch(28% 0.01 250);">{{ l.message }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <sc-if value="{{ selectedDevice.hasTags }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:22px;">
+            <sc-for list="{{ selectedDevice.tags }}" as="t" hint-placeholder-count="2">
+              <div style="font-size:11px; background:oklch(93% 0.006 250); padding:4px 10px; border-radius:20px; color:oklch(45% 0.008 250);">{{ t.label }}</div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <div style="display:flex; gap:10px;">
+          <div onClick="{{ selectedDevice.onEdit }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">Edit Device</div>
+          <div onClick="{{ selectedDevice.onDelete }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.05 25); color:oklch(45% 0.18 25); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.07 25);">Delete Device</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Add/Edit modal -->
+  <sc-if value="{{ formOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; background:oklch(20% 0.01 250 / 0.35); display:flex; align-items:center; justify-content:center; z-index:60;" onClick="{{ closeModal }}">
+      <div style="width:440px; max-width:92vw; background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:16px; padding:26px;" onClick="{{ stopProp }}">
+        <div style="font-size:17px; font-weight:700; margin-bottom:20px;">{{ formTitle }}</div>
+
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(50% 0.008 250); font-weight:600; margin-bottom:6px;">Name</div>
+            <input type="text" value="{{ formName }}" onChange="{{ onFormNameChange }}" placeholder="e.g. api-gateway" style="width:100%; box-sizing:border-box; background:oklch(97% 0.004 250); border:1px solid oklch(85% 0.008 250); border-radius:8px; padding:10px 12px; color:oklch(20% 0.01 250); font-family:'Space Grotesk',sans-serif; font-size:13px; outline:none;" />
+          </div>
+          <div>
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(50% 0.008 250); font-weight:600; margin-bottom:6px;">IP Address</div>
+            <input type="text" value="{{ formIp }}" onChange="{{ onFormIpChange }}" placeholder="10.0.1.10" style="width:100%; box-sizing:border-box; background:oklch(97% 0.004 250); border:1px solid oklch(85% 0.008 250); border-radius:8px; padding:10px 12px; color:oklch(20% 0.01 250); font-family:'JetBrains Mono',monospace; font-size:13px; outline:none;" />
+          </div>
+          <div>
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(50% 0.008 250); font-weight:600; margin-bottom:6px;">Type</div>
+            <select value="{{ formType }}" onChange="{{ onFormTypeChange }}" style="width:100%; box-sizing:border-box; background:oklch(97% 0.004 250); border:1px solid oklch(85% 0.008 250); border-radius:8px; padding:10px 12px; color:oklch(20% 0.01 250); font-family:'Space Grotesk',sans-serif; font-size:13px; outline:none;">
+              <option value="server">Server</option>
+              <option value="network">Network</option>
+              <option value="iot">IoT</option>
+              <option value="workstation">Workstation</option>
+              <option value="vm">VM</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:oklch(50% 0.008 250); font-weight:600; margin-bottom:6px;">Tags (comma separated)</div>
+            <input type="text" value="{{ formTags }}" onChange="{{ onFormTagsChange }}" placeholder="prod, us-east" style="width:100%; box-sizing:border-box; background:oklch(97% 0.004 250); border:1px solid oklch(85% 0.008 250); border-radius:8px; padding:10px 12px; color:oklch(20% 0.01 250); font-family:'Space Grotesk',sans-serif; font-size:13px; outline:none;" />
+          </div>
+        </div>
+
+        <sc-if value="{{ formError }}" hint-placeholder-val="{{ false }}">
+          <div style="color:oklch(55% 0.19 25); font-size:12px; margin-top:12px;">{{ formError }}</div>
+        </sc-if>
+
+        <div style="display:flex; gap:10px; margin-top:22px;">
+          <div onClick="{{ closeModal }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">Cancel</div>
+          <div onClick="{{ submitForm }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(55% 0.14 195); color:oklch(99% 0 0); font-size:13px; font-weight:700; cursor:pointer;" style-hover="background:oklch(50% 0.14 195);">{{ formSubmitLabel }}</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Delete confirm -->
+  <sc-if value="{{ deleteTarget }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed; inset:0; background:oklch(20% 0.01 250 / 0.35); display:flex; align-items:center; justify-content:center; z-index:70;" onClick="{{ cancelDelete }}">
+      <div style="width:380px; max-width:90vw; background:oklch(99% 0.002 250); border:1px solid oklch(89% 0.006 250); border-radius:16px; padding:26px;" onClick="{{ stopProp }}">
+        <div style="font-size:16px; font-weight:700; margin-bottom:8px;">Delete {{ deleteTargetName }}?</div>
+        <div style="font-size:13px; color:oklch(50% 0.008 250); margin-bottom:22px;">This will permanently remove the device and its history. This cannot be undone.</div>
+        <div style="display:flex; gap:10px;">
+          <div onClick="{{ cancelDelete }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(94% 0.006 250); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:oklch(90% 0.008 250);">Cancel</div>
+          <div onClick="{{ confirmDelete }}" style="flex:1; text-align:center; padding:10px; border-radius:8px; background:oklch(50% 0.16 25); color:oklch(98% 0.004 25); font-size:13px; font-weight:700; cursor:pointer;" style-hover="background:oklch(45% 0.17 25);">Delete</div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: {&quot;width&quot;: 1440, &quot;height&quot;: 900},
+  &quot;pollInterval&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 2500, &quot;min&quot;: 1000, &quot;max&quot;: 6000, &quot;step&quot;: 500, &quot;tsType&quot;: &quot;number&quot;, &quot;unit&quot;: &quot;ms&quot;, &quot;section&quot;: &quot;Behavior&quot;},
+  &quot;defaultView&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;default&quot;: &quot;grid&quot;, &quot;options&quot;: [&quot;grid&quot;, &quot;table&quot;], &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Behavior&quot;}
+}">
+const TYPE_LABELS = { server:'Server', network:'Network', iot:'IoT', workstation:'Workstation', vm:'VM' };
+
+const COLORS = {
+  healthy: 'oklch(50% 0.14 150)',
+  warning: 'oklch(55% 0.16 80)',
+  critical: 'oklch(55% 0.19 25)',
+  offline: 'oklch(55% 0.01 250)',
+};
+
+const LOG_POOL = ['Health check passed', 'Metrics agent reconnected', 'Configuration reloaded', 'Scheduled backup completed', 'Security patch applied', 'Disk cleanup completed', 'Service restarted', 'Certificate renewed'];
+
+function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+function walk(v, min, max, step) { return clamp(v + (Math.random() - 0.5) * step, min, max); }
+function rand(min, max) { return min + Math.random() * (max - min); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function seedHistory(base, variance, min, max, len) {
+  const arr = []; let v = base;
+  for (let i = 0; i < len; i++) { v = walk(v, min, max, variance); arr.push(Math.round(v * 10) / 10); }
+  return arr;
+}
+
+function pointsFor(history, min, max, w, h) {
+  if (!history || history.length === 0) return `0,${h} ${w},${h}`;
+  if (history.length === 1) {
+    const y = (h - ((clamp(history[0], min, max) - min) / (max - min)) * h).toFixed(1);
+    return `0,${y} ${w},${y}`;
+  }
+  return history.map((v, i) => {
+    const x = (i / (history.length - 1)) * w;
+    const y = h - ((clamp(v, min, max) - min) / (max - min)) * h;
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+}
+
+function metricColor(value, warnAt, critAt) {
+  if (value >= critAt) return COLORS.critical;
+  if (value >= warnAt) return COLORS.warning;
+  return COLORS.healthy;
+}
+
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400), h = Math.floor((seconds % 86400) / 3600), m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return d + 'd ' + h + 'h';
+  if (h > 0) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+
+function formatAgo(ts) {
+  const secs = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (secs < 60) return secs + 's ago';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function seedLogs() {
+  const n = 3 + Math.floor(Math.random() * 2);
+  const logs = [];
+  for (let i = 0; i < n; i++) logs.push({ ts: Date.now() - rand(3600, 5 * 86400) * 1000, message: pick(LOG_POOL) });
+  return logs.sort((a, b) => b.ts - a.ts);
+}
+
+const TYPE_POOL = [
+  { type: 'server', share: 0.34, prefixes: ['web', 'api', 'db', 'cache', 'auth', 'queue', 'mail', 'proxy'] },
+  { type: 'network', share: 0.15, prefixes: ['switch', 'router', 'fw', 'lb', 'ap'] },
+  { type: 'iot', share: 0.2, prefixes: ['sensor', 'cam', 'beacon', 'probe'] },
+  { type: 'workstation', share: 0.16, prefixes: ['ws', 'laptop', 'desk'] },
+  { type: 'vm', share: 0.15, prefixes: ['vm', 'build', 'runner', 'ci'] },
+];
+const REGIONS = ['us-east', 'us-west', 'eu-west', 'ap-south', 'sa-east'];
+const TAG_POOL = ['prod', 'staging', 'core', 'edge', 'backup'];
+
+function generateFleet(count) {
+  const devices = [];
+  let idx = 1;
+  TYPE_POOL.forEach(tp => {
+    const n = Math.round(count * tp.share);
+    for (let i = 0; i < n; i++) {
+      const region = pick(REGIONS);
+      const prefix = pick(tp.prefixes);
+      const name = prefix + '-' + region + '-' + String(idx).padStart(3, '0');
+      const ip = '10.' + (idx % 20) + '.' + Math.floor(idx / 254) + '.' + ((idx % 254) + 1);
+      const roll = Math.random();
+      const isOffline = roll < 0.04;
+      let level = 'healthy';
+      if (!isOffline) { if (roll < 0.10) level = 'critical'; else if (roll < 0.24) level = 'warning'; }
+      const cpu = isOffline ? 0 : level === 'critical' ? rand(90, 99) : level === 'warning' ? rand(75, 89) : rand(5, 70);
+      const mem = isOffline ? 0 : level === 'critical' ? rand(92, 99) : level === 'warning' ? rand(80, 91) : rand(15, 75);
+      const temp = isOffline ? 0 : level === 'critical' ? rand(82, 92) : level === 'warning' ? rand(70, 81) : rand(32, 65);
+      const tags = [pick(TAG_POOL)].concat(Math.random() < 0.3 ? [pick(TAG_POOL)] : []);
+      devices.push({
+        id: 'd' + idx, name, type: tp.type, ip, tags: [...new Set(tags)],
+        status: isOffline ? 'offline' : 'online',
+        cpu, mem, disk: rand(10, 85), temp,
+        load1: rand(0.1, 3), load5: rand(0.1, 3), load15: rand(0.1, 3),
+        netIn: rand(2, 700), netOut: rand(2, 650),
+        uptime: rand(600, 60 * 86400),
+        lastSeenAt: Date.now(),
+        history: { cpu: seedHistory(cpu, 8, 2, 99, 20), mem: seedHistory(mem, 5, 5, 97, 20), temp: seedHistory(temp, 2, 25, 92, 20) },
+        logs: seedLogs(),
+      });
+      idx++;
+    }
+  });
+  return devices;
+}
+
+class Component extends DCLogic {
+  state = {
+    devices: [],
+    view: null, search: '', statusFilter: 'all', selectedId: null,
+    formMode: null, editingId: null,
+    formName: '', formIp: '', formType: 'server', formTags: '', formError: '',
+    deleteTarget: null,
+  };
+
+  componentDidMount() {
+    this.fetchDevices();
+    this.initWebSocket();
+    this.polySyncTimer = setInterval(() => {
+      document.querySelectorAll('polyline[data-points]').forEach(p => {
+        const dp = p.getAttribute('data-points');
+        if (dp && p.getAttribute('points') !== dp) {
+          p.setAttribute('points', dp);
+        }
+      });
+    }, 100);
+  }
+
+  componentWillUnmount() {
+    if (this.ws) this.ws.close();
+    if (this.polySyncTimer) clearInterval(this.polySyncTimer);
+  }
+
+  async fetchDevices() {
+    try {
+      const res = await fetch('/api/v1/devices');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.devices && data.devices.length > 0) {
+          const mapped = data.devices.map(d => this.normalizeBackendDevice(d));
+          this.setState({ devices: mapped });
+        }
+      }
+    } catch (e) {
+      console.warn("Backend REST fetch notice:", e);
+    }
+  }
+
+  initWebSocket() {
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/ws`;
+      this.ws = new WebSocket(url);
+      this.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'List' || msg.type === 'DeviceList') {
+            const list = msg.data.map(d => this.normalizeBackendDevice(d));
+            this.setState({ devices: list });
+          } else if (msg.type === 'Updated' || msg.type === 'DeviceUpdated') {
+            const updated = this.normalizeBackendDevice(msg.data);
+            this.setState(s => {
+              const idx = s.devices.findIndex(d => d.id === updated.id);
+              if (idx >= 0) {
+                const next = [...s.devices];
+                next[idx] = updated;
+                return { devices: next };
+              } else {
+                return { devices: [...s.devices, updated] };
+              }
+            });
+          } else if (msg.type === 'Deleted' || msg.type === 'DeviceDeleted') {
+            const delId = msg.data;
+            this.setState(s => ({ devices: s.devices.filter(d => d.id !== delId) }));
+          }
+        } catch (err) {
+          console.error("Error processing WS event:", err);
+        }
+      };
+      this.ws.onclose = () => {
+        setTimeout(() => this.initWebSocket(), 3000);
+      };
+    } catch (e) {
+      console.warn("WebSocket connect notice:", e);
+    }
+  }
+
+  normalizeBackendDevice(d) {
+    return {
+      id: d.id,
+      name: d.name,
+      ip: d.ip,
+      type: (d.device_type || d.type || 'server').toLowerCase(),
+      status: (d.status || 'online').toLowerCase(),
+      cpu: d.cpu || 0,
+      mem: d.mem || 0,
+      disk: d.disk || 0,
+      temp: d.temp || 40,
+      load1: d.load1 || 0,
+      load5: d.load5 || 0,
+      load15: d.load15 || 0,
+      netIn: d.net_in !== undefined ? d.net_in : (d.netIn || 0),
+      netOut: d.net_out !== undefined ? d.net_out : (d.netOut || 0),
+      uptime: d.uptime || 0,
+      lastSeenAt: d.last_seen_at ? d.last_seen_at * 1000 : Date.now(),
+      tags: d.tags || [],
+      history: {
+        cpu: (d.history && d.history.cpu && d.history.cpu.length) ? d.history.cpu : [d.cpu || 0],
+        mem: (d.history && d.history.mem && d.history.mem.length) ? d.history.mem : [d.mem || 0],
+        temp: (d.history && d.history.temp && d.history.temp.length) ? d.history.temp : [d.temp || 40],
+      },
+      logs: (d.logs || []).map(l => ({ ts: l.ts > 1e11 ? l.ts : l.ts * 1000, message: l.message })),
+    };
+  }
+
+  statusLevel(d) {
+    if (d.status === 'offline') return 'offline';
+    if (d.cpu >= 90 || d.temp >= 82 || d.mem >= 92) return 'critical';
+    if (d.cpu >= 75 || d.temp >= 70 || d.mem >= 80) return 'warning';
+    return 'healthy';
+  }
+
+  selectDevice(id) { this.setState({ selectedId: id }); }
+  closeDetail = () => this.setState({ selectedId: null });
+  stopProp = (e) => e.stopPropagation();
+  setGridView = () => this.setState({ view: 'grid' });
+  setTableView = () => this.setState({ view: 'table' });
+  onSearchChange = (e) => this.setState({ search: e.target.value });
+  setStatusFilter(f) { this.setState({ statusFilter: f }); }
+
+  openAddModal = () => this.setState({ formMode: 'add', editingId: null, formName: '', formIp: '', formType: 'server', formTags: '', formError: '' });
+  openEditModal(d) { this.setState({ formMode: 'edit', editingId: d.id, formName: d.name, formIp: d.ip, formType: d.type, formTags: d.tags.join(', '), formError: '' }); }
+  closeModal = () => this.setState({ formMode: null });
+  onFormNameChange = (e) => this.setState({ formName: e.target.value });
+  onFormIpChange = (e) => this.setState({ formIp: e.target.value });
+  onFormTypeChange = (e) => this.setState({ formType: e.target.value });
+  onFormTagsChange = (e) => this.setState({ formTags: e.target.value });
+
+  submitForm = async () => {
+    const { formName, formIp, formType, formTags, formMode, editingId } = this.state;
+    if (!formName.trim() || !formIp.trim()) { this.setState({ formError: 'Name and IP address are required.' }); return; }
+    const tags = formTags.split(',').map(t => t.trim()).filter(Boolean);
+    if (formMode === 'add') {
+      try {
+        await fetch('/api/v1/devices', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: formName.trim(), ip: formIp.trim(), device_type: formType, tags })
+        });
+      } catch (e) {
+        console.warn("POST device error:", e);
+      }
+      this.setState({ formMode: null });
+    } else {
+      this.setState(s => ({
+        devices: s.devices.map(d => d.id === editingId ? { ...d, name: formName.trim(), ip: formIp.trim(), type: formType, tags } : d),
+        formMode: null,
+      }));
+    }
+  }
+
+  requestDelete(d) { this.setState({ deleteTarget: d }); }
+  cancelDelete = () => this.setState({ deleteTarget: null });
+  confirmDelete = async () => {
+    const target = this.state.deleteTarget;
+    if (target) {
+      try {
+        await fetch('/api/v1/devices/' + target.id, { method: 'DELETE' });
+      } catch (e) {
+        console.warn("DELETE device error:", e);
+      }
+    }
+    this.setState(s => ({ devices: s.devices.filter(d => d.id !== target.id), deleteTarget: null, selectedId: s.selectedId === target.id ? null : s.selectedId }));
+  }
+
+  buildDisplay(d) {
+    const level = this.statusLevel(d);
+    const color = COLORS[level];
+    const statusLabel = d.status === 'offline' ? 'Offline' : (level === 'healthy' ? 'Online' : level === 'warning' ? 'Warning' : 'Critical');
+    const cpuColor = d.status === 'offline' ? COLORS.offline : metricColor(d.cpu, 75, 90);
+    const memColor = d.status === 'offline' ? COLORS.offline : metricColor(d.mem, 80, 92);
+    const diskColor = metricColor(d.disk, 80, 92);
+    const tempColor = d.status === 'offline' ? COLORS.offline : metricColor(d.temp, 70, 82);
+    return {
+      id: d.id, name: d.name, ip: d.ip, typeLabel: TYPE_LABELS[d.type] || d.type,
+      statusColor: color, statusLabel, cpuColor, memColor, diskColor, tempColor,
+      cpuDisplay: Math.round(d.cpu) + '%', memDisplay: Math.round(d.mem) + '%', diskDisplay: Math.round(d.disk) + '%', tempDisplay: Math.round(d.temp) + '°C',
+      load1: d.load1.toFixed(2), load5: d.load5.toFixed(2), load15: d.load15.toFixed(2),
+      netIn: (d.netIn < 1 ? d.netIn.toFixed(2) : Math.round(d.netIn)) + ' Mbps',
+      netOut: (d.netOut < 1 ? d.netOut.toFixed(2) : Math.round(d.netOut)) + ' Mbps',
+      uptimeLabel: d.status === 'offline' ? '—' : formatUptime(d.uptime),
+      lastSeenLabel: d.status === 'offline' ? formatAgo(d.lastSeenAt) : 'now',
+      metricBars: [
+        { label: 'CPU', display: Math.round(d.cpu) + '%', pct: Math.round(d.cpu) + '%', color: cpuColor },
+        { label: 'Memory', display: Math.round(d.mem) + '%', pct: Math.round(d.mem) + '%', color: memColor },
+        { label: 'Disk', display: Math.round(d.disk) + '%', pct: Math.round(d.disk) + '%', color: diskColor },
+        { label: 'Temperature', display: Math.round(d.temp) + '°C', pct: Math.min(100, Math.max(0, d.temp)) + '%', color: tempColor },
+      ],
+      charts: [
+        { label: 'CPU', display: Math.round(d.cpu) + '%', color: cpuColor, points: pointsFor(d.history.cpu, 0, 100, 360, 56) },
+        { label: 'Memory', display: Math.round(d.mem) + '%', color: memColor, points: pointsFor(d.history.mem, 0, 100, 360, 56) },
+        { label: 'Temperature', display: Math.round(d.temp) + '°C', color: tempColor, points: pointsFor(d.history.temp, 20, 95, 360, 56) },
+      ],
+      logs: d.logs.map(l => ({ time: formatAgo(l.ts), message: l.message })),
+      hasTags: d.tags.length > 0,
+      tags: d.tags.map(t => ({ label: t })),
+      onOpen: () => this.selectDevice(d.id),
+      onEdit: (e) => { e.stopPropagation(); this.openEditModal(d); },
+      onDelete: (e) => { e.stopPropagation(); this.requestDelete(d); },
+    };
+  }
+
+  renderVals() {
+    const view = this.state.view || this.props.defaultView || 'grid';
+    const search = this.state.search.toLowerCase();
+    const filtered = this.state.devices.filter(d => {
+      const matchesSearch = !search || d.name.toLowerCase().includes(search) || d.ip.includes(search);
+      if (!matchesSearch) return false;
+      const level = this.statusLevel(d);
+      if (this.state.statusFilter === 'online') return d.status === 'online';
+      if (this.state.statusFilter === 'offline') return d.status === 'offline';
+      if (this.state.statusFilter === 'alerts') return level === 'warning' || level === 'critical';
+      return true;
+    });
+
+    const deviceCards = filtered.map(d => this.buildDisplay(d));
+    const total = this.state.devices.length;
+    const online = this.state.devices.filter(d => d.status === 'online').length;
+    const offline = total - online;
+    const alerts = this.state.devices.filter(d => this.statusLevel(d) === 'warning' || this.statusLevel(d) === 'critical').length;
+    const onlineDevices = this.state.devices.filter(d => d.status === 'online');
+    const avgCpu = onlineDevices.length ? Math.round(onlineDevices.reduce((a, d) => a + d.cpu, 0) / onlineDevices.length) : 0;
+
+    const summaryStats = [
+      { label: 'Total Devices', value: String(total), color: 'oklch(20% 0.01 250)' },
+      { label: 'Online', value: String(online), color: COLORS.healthy },
+      { label: 'Offline', value: String(offline), color: COLORS.offline },
+      { label: 'Alerts', value: String(alerts), color: alerts > 0 ? COLORS.warning : 'oklch(20% 0.01 250)' },
+      { label: 'Avg CPU', value: avgCpu + '%', color: 'oklch(20% 0.01 250)' },
+    ];
+
+    const filters = [{ key: 'all', label: 'All' }, { key: 'online', label: 'Online' }, { key: 'alerts', label: 'Alerts' }, { key: 'offline', label: 'Offline' }];
+    const statusFilters = filters.map(f => ({
+      label: f.label, onClick: () => this.setStatusFilter(f.key),
+      style: 'padding:7px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; ' +
+        (this.state.statusFilter === f.key ? 'background:oklch(90% 0.02 195); color:oklch(30% 0.02 195);' : 'background:transparent; color:oklch(50% 0.008 250);'),
+    }));
+
+    const selected = this.state.selectedId ? this.state.devices.find(d => d.id === this.state.selectedId) : null;
+    const selectedDevice = selected ? { ...this.buildDisplay(selected), onEdit: () => this.openEditModal(selected), onDelete: () => this.requestDelete(selected) } : null;
+    const toggleBase = 'padding:7px 9px; border-radius:5px; cursor:pointer; display:flex; align-items:center;';
+    const deleteTarget = this.state.deleteTarget;
+
+    return {
+      search: this.state.search, onSearchChange: this.onSearchChange, statusFilters,
+      isGridView: view === 'grid', isTableView: view === 'table',
+      setGridView: this.setGridView, setTableView: this.setTableView,
+      gridToggleStyle: toggleBase + (view === 'grid' ? 'background:oklch(99% 0.002 250); color:oklch(20% 0.01 250); box-shadow:0 1px 2px oklch(20% 0.01 250 / 0.1);' : 'color:oklch(52% 0.008 250);'),
+      tableToggleStyle: toggleBase + (view === 'table' ? 'background:oklch(99% 0.002 250); color:oklch(20% 0.01 250); box-shadow:0 1px 2px oklch(20% 0.01 250 / 0.1);' : 'color:oklch(52% 0.008 250);'),
+      openAddModal: this.openAddModal, summaryStats, deviceCount: total,
+      hasNoResults: deviceCards.length === 0, deviceCards, stopProp: this.stopProp,
+      selectedDevice, closeDetail: this.closeDetail,
+      formOpen: !!this.state.formMode,
+      formTitle: this.state.formMode === 'add' ? 'Add Device' : 'Edit Device',
+      formSubmitLabel: this.state.formMode === 'add' ? 'Add Device' : 'Save Changes',
+      formName: this.state.formName, formIp: this.state.formIp, formType: this.state.formType, formTags: this.state.formTags,
+      formError: this.state.formError,
+      onFormNameChange: this.onFormNameChange, onFormIpChange: this.onFormIpChange, onFormTypeChange: this.onFormTypeChange, onFormTagsChange: this.onFormTagsChange,
+      closeModal: this.closeModal, submitForm: this.submitForm,
+      deleteTarget, deleteTargetName: deleteTarget ? deleteTarget.name : '',
+      cancelDelete: this.cancelDelete, confirmDelete: this.confirmDelete,
+    };
+  }
+}
+
+</script>
+</body>
+</html>
