@@ -631,6 +631,25 @@ class Component extends DCLogic {
         maintainAspectRatio: false,
         animation: false,
         interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: {
+            onClick: (e, legendItem, legend) => {
+              const chart = legend.chart;
+              const clickedIndex = legendItem.datasetIndex;
+              const onlyClickedVisible = chart.data.datasets.every((_, i) =>
+                i === clickedIndex ? chart.isDatasetVisible(i) : !chart.isDatasetVisible(i)
+              );
+              if (onlyClickedVisible) {
+                // Already isolated on this dataset — clicking again restores all.
+                chart.data.datasets.forEach((_, i) => chart.show(i));
+              } else {
+                chart.data.datasets.forEach((_, i) => {
+                  if (i === clickedIndex) chart.show(i); else chart.hide(i);
+                });
+              }
+            }
+          }
+        },
         scales
       }
     });
